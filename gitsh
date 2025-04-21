@@ -1,0 +1,99 @@
+#!/bin/bash
+
+loginUsers=false
+currentStatus=false
+
+while getopts "ls" opt; do
+    case "$opt" in
+        l) loginUsers=true ;;
+        s) currentStatus=true ;;
+    esac
+done
+
+displayChangeFile() {
+    TZ=UTC find src -type f -newermt "$(head -n 1 ./tmp/$(whoami)/startTime.log)"
+}
+
+loginFC() {
+    datetext=$(date -u "+%Y-%m-%d %H:%M:%S")
+    if [ "$1" = "Start" ]; then
+        mkdir -p tmp
+        mkdir -p "./tmp/$(whoami)"
+        echo "$datetext $(whoami) [Start]" >> ./logs/login$(date -u "+%Y-%m-%d").log
+        echo "$datetext" > ./tmp/$(whoami)/startTime.log
+        echo $(whoami) >> ./tmp/loginUsers.log
+        if [ "$(stat -c %U "tmp")" = "$(whoami)" ]; then
+            chmod -R 777 "tmp"
+        fi
+        echo "Start | $datetext"
+    elif [ "$1" = "End" ]; then
+        changed_files=$(displayChangeFile)
+        touch "./tmp/startLog.log"
+        startLog="./tmp/startLog.log"
+        if [ "$(stat -c %U "./tmp/startLog.log")" = "$(whoami)" ]; then
+            chmod 777 "./tmp/startLog.log"
+        fi
+        if [ -n "$changed_files" ]; then
+            read -p "Leave a commit message: " MEMO
+	        echo "-----Commit Message------" >> $startLog
+            echo "$MEMO" >> $startLog
+            echo "-----Change Files------" >> $startLog
+            echo "$changed_files" >> $startLog
+        fi
+        targetUser="$(whoami)"
+        grep -v "^${targetUser}$" ./tmp/loginUsers.log > ./tmp/loginUserstmp.log
+        mv -f ./tmp/loginUserstmp.log ./tmp/loginUsers.log
+        echo "$datetext $(whoami) [End]" >> $startLog
+	    mkdir -p logs
+        cat $startLog >> ./logs/login$(date -u "+%Y-%m-%d").log
+        rm $startLog
+        rm -r "./tmp/$(whoami)"
+        if [ "$(cat "./tmp/loginUsers.log")" = "" ]; then
+            rm -r tmp
+        fi
+	    echo "End | $datetext"
+    fi
+}
+
+backup() {
+    changed_files=$(displayChangeFile)
+    if [ -n "$changed_files" ]; then
+        backupDir="./$(date -u "+%Y-%m-%d_%H-%M-%S")"
+        mkdir -p "backups"
+        mkdir -p "./backups/$backupDir"
+	    echo "$changed_files" > "./backups/$backupDir/changeFiles.txt"
+        echo "$changed_files" | while IFS= read -r file;
+        do
+            cp --parents "$file" "./backups/$backupDir"
+        done
+        echo "Backed up edited files."
+    fi
+}
+
+if ! $loginUsers && ! $currentStatus; then
+    if grep -q "^$(whoami)$" ./tmp/loginUsers.log 2>/dev/null; then
+        displayChangeFile
+        backup
+        loginFC End
+    else
+        loginFC Start
+    fi
+fi
+
+if $currentStatus; then
+    echo "Status"
+    if [ -f "./tmp/$(whoami)/startTime.log" ]; then
+        echo "You are working from $(cat "./tmp/$(whoami)/startTime.log")"
+    else
+        echo "You are not working"
+    fi
+fi
+
+if $loginUsers; then
+    echo "Login Users"
+    if [ -f "./tmp/loginUsers.log" ]; then
+        cat -n "./tmp/loginUsers.log"
+    else
+        echo "Nobody"
+    fi
+fi
